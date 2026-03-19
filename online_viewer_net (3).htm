@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Küre - Gelişmiş Yapay Zeka (1-10)</title>
+    <style>
+        :root {
+            --bg: #f5f6fa;
+            --board: #3d2b1f;
+            --purple: #8e44ad;
+            --orange: #e67e22;
+            --well: #2c1e14;
+        }
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; background: var(--bg); margin: 0; padding: 20px; }
+        
+        /* Giriş Ekranı */
+        #setup-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; }
+        .setup-box { background: #2c3e50; padding: 40px; border-radius: 20px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .difficulty-slider { width: 300px; margin: 20px 0; }
+        
+        /* Oyun Alanı */
+        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 15px; text-align: center; min-width: 450px; }
+        #board { display: grid; grid-template-columns: repeat(7, 60px); grid-template-rows: repeat(7, 60px); gap: 6px; background: var(--board); padding: 15px; border-radius: 10px; border: 8px solid #2a1d15; }
+        .well { width: 60px; height: 60px; background: var(--well); border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; position: relative; box-shadow: inset 0 4px 8px rgba(0,0,0,0.6); }
+        .piece { width: 48px; height: 48px; border-radius: 50%; transition: 0.2s; z-index: 2; }
+        .piece.purple { background: radial-gradient(circle at 30% 30%, #af7ac5, #8e44ad); box-shadow: 0 4px #5b2c6f; }
+        .piece.orange { background: radial-gradient(circle at 30% 30%, #f39c12, #d35400); box-shadow: 0 4px #873600; }
+        .selected { transform: scale(1.1); border: 3px solid #fff; box-shadow: 0 0 15px #fff; }
+        .hint::after { content: ''; width: 16px; height: 16px; background: rgba(46, 204, 113, 0.5); border-radius: 50%; position: absolute; }
+        .stats { display: flex; justify-content: space-around; font-weight: bold; margin-top: 10px; font-size: 1.2em; }
+        .btn { padding: 10px 25px; background: #34495e; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; }
+        .btn:hover { background: #2c3e50; }
+    </style>
+</head>
+<body>
+
+<div id="setup-screen">
+    <div class="setup-box">
+        <h1>Küre Oyunu</h1>
+        <p>Bot Zorluk Seviyesini Seçin</p>
+        <input type="range" id="diff-range" min="1" max="10" value="5" class="difficulty-slider">
+        <div style="font-size: 1.5em; margin-bottom: 20px;">Seviye: <span id="diff-val">5</span></div>
+        <div id="diff-desc" style="font-size: 0.9em; margin-bottom: 20px; color: #bdc3c7;">(Orta Seviye)</div>
+        <button class="btn" onclick="startGame()">Oyunu Başlat</button>
+    </div>
+</div>
+
+<div class="panel">
+    <h2 id="turn-txt">Sıra: Mor Oyuncu</h2>
+    <div class="stats">
+        <span style="color: var(--purple)">Siz: <span id="p-score">0</span></span>
+        <span id="ai-label" style="color: var(--orange)">Bot (Seviye 5): <span id="o-score">0</span></span>
+    </div>
+    <div id="msg" style="color: #c0392b; font-weight: bold; height: 20px; margin-top: 5px;"></div>
+</div>
+
+<div id="board"></div>
+
+<button class="btn" onclick="location.reload()" style="margin-top:20px;">Yeni Oyun / Seviye Değiştir</button>
+
+<script>
+    const SIZE = 7;
+    const P = 'purple', O = 'orange';
+    let board = [], turn = P, selected = null, scores = {purple: 0, orange: 0}, active = false;
+    let botLevel = 5;
+
+    // Seviye Göstergesi
+    document.getElementById('diff-range').oninput = function() {
+        const val = this.value;
+        document.getElementById('diff-val').innerText = val;
+        let desc = "";
+        if(val <= 2) desc = "Sadece taşları hareket ettirmeyi biliyor.";
+        else if(val <= 4) desc = "Taş yeme fırsatlarını görmeye başlıyor.";
+        else if(val <= 7) desc = "Stratejik konumları değerlendiriyor.";
+        else if(val <= 9) desc = "Birkaç hamle sonrasını hesaplıyor.";
+        else desc = "Oxford Mezunu: Hata yapmanızı bekliyor!";
+        document.getElementById('diff-desc').innerText = desc;
+    };
+
+    function startGame() {
+        botLevel = parseInt(document.getElementById('diff-range').value);
+        document.getElementById('ai-label').innerText = `Bot (Seviye ${botLevel}): `;
+        const scoreSpan = document.createElement('span');
+        scoreSpan.id = "o-score"; scoreSpan.innerText = "0";
+        document.getElementById('ai-label').appendChild(scoreSpan);
+        document.getElementById('setup-screen').style.display = 'none';
+        active = true;
+        initBoard();
+    }
+
+    function initBoard() {
+        const bDiv = document.getElementById('board');
+        bDiv.innerHTML = '';
+        board = Array(SIZE).fill(null).map(() => Array(SIZE).fill(null));
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                const w = document.createElement('div');
+                w.className = 'well'; w.dataset.r = r; w.dataset.c = c;
+                w.onclick = () => handleWellClick(r, c);
+                bDiv.appendChild(w);
+                if (r === 6) board[r][c] = P;
+                if (r === 0) board[r][c] = O;
+            }
+        }
+        render();
+    }
+
+    function render() {
+        document.querySelectorAll('.well').forEach(w => {
+            const r = w.dataset.r, c = w.dataset.c;
+            w.innerHTML = ''; w.classList.remove('hint');
+            if (board[r][c]) {
+                const div = document.createElement('div');
+                div.className = `piece ${board[r][c]}`;
+                if (selected && selected.r == r && selected.c == c) div.classList.add('selected');
+                w.appendChild(div);
+            }
+        });
+        if (selected) {
+            getValidMoves(selected.r, selected.c, board).forEach(m => {
+                document.querySelector(`.well[data-r="${m.r}"][data-c="${m.c}"]`).classList.add('hint');
+            });
+        }
+    }
+
+    function getValidMoves(r, c, currentBoard) {
+        const piece = currentBoard[r][c];
+        const moves = [];
+        const isAtStart = (piece === P && r === 6) || (piece === O && r === 0);
+        
+        // Kural: Sadece Dikey ve Çapraz. Sağa-Sola (Yatay) ASLA yok.
+        let pool = isAtStart ? 
+            (piece === P ? [[-1, 0], [-1, -1], [-1, 1]] : [[1, 0], [1, -1], [1, 1]]) :
+            [[-1, 0], [1, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+
+        pool.forEach(([dr, dc]) => {
+            const nr = r + dr, nc = c + dc;
+            if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && !currentBoard[nr][nc]) {
+                if (!((piece === P && nr === 6) || (piece === O && nr === 0))) { // Geri dönüş yasağı
+                    if (!isIllegalFour(nr, nc, piece, currentBoard)) moves.push({r: nr, c: nc});
+                }
+            }
+        });
+        return moves;
+    }
+
+    function isIllegalFour(r, c, color, currentBoard) {
+        const old = currentBoard[r][c];
+        currentBoard[r][c] = color;
+        let forbidden = false;
+        const vectors = [[0,1], [1,0], [1,1], [1,-1]];
+        vectors.forEach(([dr, dc]) => {
+            let count = 0;
+            for(let i = -6; i <= 6; i++) {
+                let cr = r + i*dr, cc = c + i*dc;
+                if(cr >= 0 && cr < SIZE && cc >= 0 && cc < SIZE) {
+                    if(currentBoard[cr][cc] === color) count++;
+                }
+            }
+            if(count >= 4) forbidden = true;
+        });
+        currentBoard[r][c] = old;
+        return forbidden;
+    }
+
+    function handleWellClick(r, c) {
+        if (!active || turn === O) return;
+        if (board[r][c] === turn) {
+            selected = {r, c};
+        } else if (selected) {
+            const moves = getValidMoves(selected.r, selected.c, board);
+            if (moves.some(m => m.r === r && m.c === c)) executeMove(selected.r, selected.c, r, c);
+        }
+        render();
+    }
+
+    function executeMove(fR, fC, tR, tC) {
+        const piece = board[fR][fC];
+        board[tR][tC] = piece;
+        board[fR][fC] = null;
+        selected = null;
+
+        let capturedCount = checkCaptures(tR, tC, piece, board);
+        scores[piece] += capturedCount;
+
+        document.getElementById('p-score').innerText = scores.purple;
+        document.getElementById('o-score').innerText = scores.orange;
+
+        if (scores.purple >= 4 || scores.orange >= 4) {
+            active = false;
+            document.getElementById('msg').innerText = scores.purple >= 4 ? "TEBRİKLER, KAZANDINIZ!" : "BOT KAZANDI!";
+        } else {
+            turn = (turn === P) ? O : P;
+            document.getElementById('turn-txt').innerText = `Sıra: ${turn === P ? 'Mor' : 'Turuncu'}`;
+            if (turn === O && active) setTimeout(botDecision, 600);
+        }
+    }
+
+    function checkCaptures(r, c, color, targetBoard) {
+        const opp = (color === P) ? O : P;
+        const dirs = [[0,1],[0,-1],[1,0],[-1,0],[1,1],[-1,-1],[1,-1],[-1,1]];
+        let eaten = 0;
+        dirs.forEach(([dr, dc]) => {
+            const r1 = r + dr, c1 = c + dc;
+            const r2 = r + 2*dr, c2 = c + 2*dc;
+            if (r2 >= 0 && r2 < SIZE && c2 >= 0 && c2 < SIZE) {
+                if (targetBoard[r1][c1] === opp && targetBoard[r2][c2] === color) {
+                    targetBoard[r1][c1] = null;
+                    eaten++;
+                }
+            }
+        });
+        return eaten;
+    }
+
+    // --- YAPAY ZEKA MANTIĞI ---
+
+    function botDecision() {
+        const allMoves = getAllPossibleMoves(O, board);
+        if (allMoves.length === 0) return;
+
+        let chosenMove;
+
+        // Seviye 1-2: Tamamen rastgele
+        if (botLevel <= 2) {
+            chosenMove = allMoves[Math.floor(Math.random() * allMoves.length)];
+        } 
+        // Seviye 3-10: Stratejik değerlendirme ve Minimax
+        else {
+            const depth = botLevel >= 9 ? 3 : (botLevel >= 6 ? 2 : 1);
+            chosenMove = minimaxDecision(board, depth);
+        }
+
+        executeMove(chosenMove.f.r, chosenMove.f.c, chosenMove.t.r, chosenMove.t.c);
+        render();
+    }
+
+    function getAllPossibleMoves(color, currentBoard) {
+        let moves = [];
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (currentBoard[r][c] === color) {
+                    const valid = getValidMoves(r, c, currentBoard);
+                    valid.forEach(m => moves.push({f: {r, c}, t: m}));
+                }
+            }
+        }
+        return moves;
+    }
+
+    function minimaxDecision(currentBoard, depth) {
+        const moves = getAllPossibleMoves(O, currentBoard);
+        let bestScore = -Infinity;
+        let bestMove = moves[0];
+
+        // Rastgelelik ekle (Oxford mezunu bile bazen farklı açılış yapar)
+        moves.sort(() => Math.random() - 0.5);
+
+        for (let move of moves) {
+            let tempBoard = currentBoard.map(row => [...row]);
+            executeSimulation(tempBoard, move.f, move.t, O);
+            
+            let score = minimax(tempBoard, depth - 1, -Infinity, Infinity, false);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+            }
+        }
+        return bestMove;
+    }
+
+    function minimax(tempBoard, depth, alpha, beta, isMax) {
+        if (depth === 0) return evaluateBoard(tempBoard);
+
+        const moves = getAllPossibleMoves(isMax ? O : P, tempBoard);
+        if (isMax) {
+            let maxEval = -Infinity;
+            for (let move of moves) {
+                let nextBoard = tempBoard.map(row => [...row]);
+                executeSimulation(nextBoard, move.f, move.t, O);
+                let ev = minimax(nextBoard, depth - 1, alpha, beta, false);
+                maxEval = Math.max(maxEval, ev);
+                alpha = Math.max(alpha, ev);
+                if (beta <= alpha) break;
+            }
+            return maxEval;
+        } else {
+            let minEval = Infinity;
+            for (let move of moves) {
+                let nextBoard = tempBoard.map(row => [...row]);
+                executeSimulation(nextBoard, move.f, move.t, P);
+                let ev = minimax(nextBoard, depth - 1, alpha, beta, true);
+                minEval = Math.min(minEval, ev);
+                beta = Math.min(beta, ev);
+                if (beta <= alpha) break;
+            }
+            return minEval;
+        }
+    }
+
+    function executeSimulation(b, f, t, color) {
+        b[t.r][t.c] = b[f.r][f.c];
+        b[f.r][f.c] = null;
+        checkCaptures(t.r, t.c, color, b);
+    }
+
+    function evaluateBoard(b) {
+        let score = 0;
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (b[r][c] === O) {
+                    score += 10; // Taş değeri
+                    if (r > 1 && r < 5 && c > 1 && c < 5) score += 2; // Merkez kontrolü bonusu
+                } else if (b[r][c] === P) {
+                    score -= 10;
+                }
+            }
+        }
+        // Seviye arttıkça bot yeme fırsatlarına daha agresif bakar
+        const currentBotScore = 7 - b.flat().filter(x => x === P).length;
+        const currentPlayerScore = 7 - b.flat().filter(x => x === O).length;
+        score += currentBotScore * 50;
+        score -= currentPlayerScore * 50;
+        return score;
+    }
+</script>
+</body>
+</html>
